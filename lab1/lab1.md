@@ -23,12 +23,65 @@ func Handler(conn net.Conn) {}
 在TCP服务器关闭之前需要执行必要的清理工作，包括正在完成的数据传输，关闭TCP连接等，可以避免资源泄露以及客户端未收到完整数据造成的故障
 所以需要一个新的函数来监听关闭信号并执行相应操作
 ```go
-func ListenAndServeWithSignal(cfg *Config, handler tcp.Handler) error {}
-func ListenAndServe(listener net.Listener, handler tcp.Handler, closeChan <-chan struct{}) {}
+// 原有的listenAndServe函数增加一个通过通道处理关闭信号，并关闭服务器的功能
+func listenAndServeWithSignal(cfg *Config, handler tcp.Handler) error {}
+func listenAndServe(listener net.Listener, handler tcp.Handler, closeChan <-chan struct{}) {}
 
 ```
 
 ### 附录
+#### tcp example.go
+```go
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"log"
+	"net"
+)
+
+func listenAndServe(address string) {
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		log.Fatal(fmt.Sprintf("listen err: %s", err))
+	}
+	defer listener.Close()
+
+	for {
+		conn, err := listener.Accept()
+		if err != nil {
+			log.Fatal(fmt.Sprintf("accept err: %s", err))
+		}
+		go Handler(conn)
+	}
+}
+
+func Handler(conn net.Conn) {
+	reader := bufio.NewReader(conn)
+	for {
+		msg, err := reader.ReadString('\n')
+		if err != nil {
+			//log.Fatal(fmt.Sprintf("read err: %s", err))
+			log.Println(err)
+			return
+		}
+		b := []byte(msg)
+		conn.Write(b)
+	}
+}
+
+func main() {
+	listenAndServe(":8888")
+}
+
+```
+
+#### graceful shutdown.go
+```go
+
+```
+
 #### 1. fmt的各种输出函数
 ```go
 fmt.Print("Hello, ", "World!")

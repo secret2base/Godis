@@ -74,9 +74,9 @@ type MultiBulkReply struct {
 	Args [][]byte
 }
 
-func MakeMultiBulkReply(arg [][]byte) *MultiBulkReply {
+func MakeMultiBulkReply(args [][]byte) *MultiBulkReply {
 	return &MultiBulkReply{
-		Args: arg,
+		Args: args,
 	}
 }
 

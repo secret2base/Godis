@@ -164,9 +164,9 @@ func parseArray(header []byte, reader *bufio.Reader, ch chan<- *Payload) error {
 			return err
 		}
 		lines = append(lines, body[:len(body)-2])
-		ch <- &Payload{
-			Data: protocol.MakeMultiBulkReply(lines),
-		}
+	}
+	ch <- &Payload{
+		Data: protocol.MakeMultiBulkReply(lines),
 	}
 	return nil
 }

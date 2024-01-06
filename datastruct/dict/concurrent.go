@@ -2,8 +2,10 @@ package dict
 
 import (
 	"math"
+	"math/rand"
 	"sync"
 	"sync/atomic"
+	"time"
 )
 
 // ConcurrentDict 分段字典，一个Dict中有多个shard
@@ -19,7 +21,7 @@ type ConcurrentDict struct {
 // shard 每个分段都有自己的mutex锁
 type shard struct {
 	m     map[string]interface{}
-	mutex sync.Mutex
+	mutex sync.RWMutex
 }
 
 // computeCapacity 对于输入的param，输出不小于param的最小2的幂次
@@ -209,10 +211,111 @@ func (dict *ConcurrentDict) ForEach(consumer Consumer) {
 	// 遍历每个分段
 	// _和s是index和value
 	for _, s := range dict.table {
-		// RLock是在 datastruct/lock/lock_map.go中实现的方法
 		s.mutex.RLock()
-
+		// 定义函数f
+		f := func() bool {
+			// 函数结束时释放对应分段的锁
+			defer s.mutex.RUnlock()
+			// 遍历此分段中的map
+			for key, value := range s.m {
+				continues := consumer(key, value)
+				if !continues {
+					return false
+				}
+			}
+			return true
+		}
+		// 执行f并判断执行结果
+		if !f() {
+			break
+		}
 	}
+}
+
+func (dict *ConcurrentDict) Keys() []string {
+	if dict == nil {
+		panic("dict is nil")
+	}
+	// 创建一个和字典长度相同的字符串切片,但是在遍历过程中Dict也有可能会继续增加新的键值对
+	keys := make([]string, dict.Len())
+	// 遍历所有分段，存储keys，复用了ForEach方法
+	i := 0
+	dict.ForEach(func(key string, val interface{}) bool {
+		if i < len(keys) {
+			keys[i] = key
+		} else { // 超过容量就使用append方法继续添加
+			keys = append(keys, key)
+		}
+		return true
+	})
+	return keys
+}
+
+// RandomKey 是RandomKeys的辅助函数，用某一分段中读取随机一个key
+func (s *shard) RandomKey() string {
+	if s == nil {
+		panic("shard is nil")
+	}
+	s.mutex.RLock()
+	defer s.mutex.RUnlock()
+	// 由于map的读取是随机的，所以返回第一个key即可
+	for key := range s.m {
+		return key
+	}
+	// shard为空时返回空字符串
+	return ""
+}
+
+func (dict *ConcurrentDict) RandomKeys(limit int) []string {
+	size := dict.Len()
+	// limit大于Dict长度时返回所有Key
+	if limit > size {
+		return dict.Keys()
+	}
+	keys := make([]string, limit)
+	// 下面将随机选择shard并调用RandomKey方法
+	// rand.NewSource(time.Now().UnixNano())创建一个随机数种子
+	// rand.New()基于随机数种子创建随机数生成器
+	nR := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for i := 0; i < limit; i++ {
+		s := dict.getShard(uint32(nR.Intn(dict.shardCount)))
+		keys[i] = s.RandomKey()
+	}
+	return keys
+}
+
+func (dict *ConcurrentDict) RandomDistinctKeys(limit int) []string {
+	size := dict.Len()
+	if limit > size {
+		return dict.Keys()
+	}
+	// 为区分不同的key，使用map存储随机出来的key
+	// map的值定义为空结构体，因为不需要用到值
+	keys := make(map[string]struct{})
+
+	nR := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for i := 0; i < limit; i++ {
+		s := dict.getShard(uint32(nR.Intn(dict.shardCount)))
+		key := s.RandomKey()
+		// 先判断是否取到了key,再判断是否已经存在此key
+		if key != "" {
+			if _, exists := keys[key]; !exists {
+				keys[key] = struct{}{}
+			}
+		}
+	}
+	// 将map转为切片返回
+	result := make([]string, limit)
+	i := 0
+	for k := range keys {
+		result[i] = k
+		i++
+	}
+	return result
+}
+
+func (dict *ConcurrentDict) Clear() {
+	*dict = *MakeConcurrentDict(dict.shardCount)
 }
 
 func (dict *ConcurrentDict) addCount() int32 {

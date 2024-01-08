@@ -84,7 +84,7 @@ func fnv32(key string) uint32 {
 // 将hashCode映射到对应的分段表中
 func (dict *ConcurrentDict) spread(hashCode uint32) uint32 {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	// 计算分段表的数量
 	tableSize := uint32(len(dict.table))
@@ -95,7 +95,7 @@ func (dict *ConcurrentDict) spread(hashCode uint32) uint32 {
 // 通过下标返回对应的分段表
 func (dict *ConcurrentDict) getShard(index uint32) *shard {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	return dict.table[index]
 }
@@ -104,7 +104,7 @@ func (dict *ConcurrentDict) getShard(index uint32) *shard {
 
 func (dict *ConcurrentDict) Get(key string) (val interface{}, exists bool) {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	hashCode := fnv32(key)
 	index := dict.spread(hashCode)
@@ -118,7 +118,7 @@ func (dict *ConcurrentDict) Get(key string) (val interface{}, exists bool) {
 
 func (dict *ConcurrentDict) Len() int {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	// 通过原子操作确保读取dict.count
 	return int(atomic.LoadInt32(&dict.count))
@@ -126,7 +126,7 @@ func (dict *ConcurrentDict) Len() int {
 
 func (dict *ConcurrentDict) Put(key string, val interface{}) (result int) {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	hashCode := fnv32(key)
 	index := dict.spread(hashCode)
@@ -146,7 +146,7 @@ func (dict *ConcurrentDict) Put(key string, val interface{}) (result int) {
 
 func (dict *ConcurrentDict) PutIfAbsent(key string, val interface{}) (result int) {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	hashCode := fnv32(key)
 	index := dict.spread(hashCode)
@@ -165,7 +165,7 @@ func (dict *ConcurrentDict) PutIfAbsent(key string, val interface{}) (result int
 
 func (dict *ConcurrentDict) PutIfExists(key string, val interface{}) (result int) {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	hashCode := fnv32(key)
 	index := dict.spread(hashCode)
@@ -187,7 +187,7 @@ func (dict *ConcurrentDict) PutIfExists(key string, val interface{}) (result int
 
 func (dict *ConcurrentDict) Remove(key string) (val interface{}, result int) {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	hashCode := fnv32(key)
 	index := dict.spread(hashCode)
@@ -206,7 +206,7 @@ func (dict *ConcurrentDict) Remove(key string) (val interface{}, result int) {
 
 func (dict *ConcurrentDict) ForEach(consumer Consumer) {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	// 遍历每个分段
 	// _和s是index和value
@@ -234,7 +234,7 @@ func (dict *ConcurrentDict) ForEach(consumer Consumer) {
 
 func (dict *ConcurrentDict) Keys() []string {
 	if dict == nil {
-		panic("dict is nil")
+		panic(any("dict is nil"))
 	}
 	// 创建一个和字典长度相同的字符串切片,但是在遍历过程中Dict也有可能会继续增加新的键值对
 	keys := make([]string, dict.Len())
@@ -254,7 +254,7 @@ func (dict *ConcurrentDict) Keys() []string {
 // RandomKey 是RandomKeys的辅助函数，用某一分段中读取随机一个key
 func (s *shard) RandomKey() string {
 	if s == nil {
-		panic("shard is nil")
+		panic(any("shard is nil"))
 	}
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()

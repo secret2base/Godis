@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"Godis/interface/redis"
 	"bytes"
 	"strconv"
 )
@@ -28,7 +29,8 @@ func (r *StatusReply) ToBytes() []byte {
 }
 
 /* ---- Error Reply ---- */
-// 对于错误类型，定义了单独的Error()方法，可能是为了对错误提供足够的信息
+// 对于错误类型，定义了单独的Error()方法，可能是为了对错误提供足够的信息（在后面的./redis/protocol/error.go中定义有多种错误类型及其回复）
+
 type ErrorReply interface {
 	Error() string
 	ToBytes() []byte
@@ -107,4 +109,59 @@ func MakeIntReply(code int64) *IntReply {
 
 func (r *IntReply) ToBytes() []byte {
 	return []byte(":" + strconv.FormatInt(r.Code, 10) + CRLF)
+}
+
+/* ---- Ok Reply ---- */
+type OkReply struct{}
+
+func (o OkReply) ToBytes() []byte {
+	return []byte("+Ok\r\n")
+}
+
+func MakeOkReply() *OkReply {
+	return &OkReply{}
+}
+
+/* ---- Multi Raw Reply ---- */
+
+// MultiRawReply store complex list structure, for example GeoPos command
+type MultiRawReply struct {
+	Replies []redis.Reply
+}
+
+// MakeMultiRawReply creates MultiRawReply
+func MakeMultiRawReply(replies []redis.Reply) *MultiRawReply {
+	return &MultiRawReply{
+		Replies: replies,
+	}
+}
+
+// ToBytes marshal redis.Reply
+func (r *MultiRawReply) ToBytes() []byte {
+	argLen := len(r.Replies)
+	var buf bytes.Buffer
+	buf.WriteString("*" + strconv.Itoa(argLen) + CRLF)
+	for _, arg := range r.Replies {
+		buf.Write(arg.ToBytes())
+	}
+	return buf.Bytes()
+}
+
+/* ---- Queued Reply ---- */
+// 原作者将其放入godis/redis/protocol/consts.go
+
+type QueuedReply struct{}
+
+var queuedBytes = []byte("+QUEUED\r\n")
+
+// ToBytes marshal redis.Reply
+func (r *QueuedReply) ToBytes() []byte {
+	return queuedBytes
+}
+
+var theQueuedReply = new(QueuedReply)
+
+// MakeQueuedReply returns a QUEUED protocol
+func MakeQueuedReply() *QueuedReply {
+	return theQueuedReply
 }

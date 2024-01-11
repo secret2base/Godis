@@ -3,6 +3,7 @@ package dict
 import (
 	"math"
 	"math/rand"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -116,6 +117,17 @@ func (dict *ConcurrentDict) Get(key string) (val interface{}, exists bool) {
 	return val, exists
 }
 
+func (dict *ConcurrentDict) GetWithLock(key string) (val interface{}, exists bool) {
+	if dict == nil {
+		panic(any("dict is nil"))
+	}
+	hashCode := fnv32(key)
+	index := dict.spread(hashCode)
+	s := dict.getShard(index)
+	val, exists = s.m[key]
+	return val, exists
+}
+
 func (dict *ConcurrentDict) Len() int {
 	if dict == nil {
 		panic(any("dict is nil"))
@@ -134,6 +146,24 @@ func (dict *ConcurrentDict) Put(key string, val interface{}) (result int) {
 	s.mutex.Lock()
 	defer s.mutex.Unlock()
 	// 判断该key是否已经存在
+	if _, ok := s.m[key]; ok {
+		s.m[key] = val
+		return 0
+	}
+	// count计数器加一，原子操作
+	dict.addCount()
+	s.m[key] = val
+	return 1
+}
+
+func (dict *ConcurrentDict) PutWithLock(key string, val interface{}) (result int) {
+	if dict == nil {
+		panic(any("dict is nil"))
+	}
+	hashCode := fnv32(key)
+	index := dict.spread(hashCode)
+	s := dict.getShard(index)
+
 	if _, ok := s.m[key]; ok {
 		s.m[key] = val
 		return 0
@@ -163,6 +193,22 @@ func (dict *ConcurrentDict) PutIfAbsent(key string, val interface{}) (result int
 	return 1
 }
 
+func (dict *ConcurrentDict) PutIfAbsentWithLock(key string, val interface{}) (result int) {
+	if dict == nil {
+		panic(any("dict is nil"))
+	}
+	hashCode := fnv32(key)
+	index := dict.spread(hashCode)
+	s := dict.getShard(index)
+
+	if _, ok := s.m[key]; ok {
+		return 0
+	}
+	s.m[key] = val
+	dict.addCount()
+	return 1
+}
+
 func (dict *ConcurrentDict) PutIfExists(key string, val interface{}) (result int) {
 	if dict == nil {
 		panic(any("dict is nil"))
@@ -185,6 +231,21 @@ func (dict *ConcurrentDict) PutIfExists(key string, val interface{}) (result int
 	return 0
 }
 
+func (dict *ConcurrentDict) PutIfExistsWithLock(key string, val interface{}) (result int) {
+	if dict == nil {
+		panic(any("dict is nil"))
+	}
+	hashCode := fnv32(key)
+	index := dict.spread(hashCode)
+	s := dict.getShard(index)
+
+	if _, ok := s.m[key]; ok {
+		s.m[key] = val
+		return 1
+	}
+	return 0
+}
+
 func (dict *ConcurrentDict) Remove(key string) (val interface{}, result int) {
 	if dict == nil {
 		panic(any("dict is nil"))
@@ -202,6 +263,22 @@ func (dict *ConcurrentDict) Remove(key string) (val interface{}, result int) {
 		return v, 1
 	}
 	return nil, 0
+}
+
+func (dict *ConcurrentDict) RemoveWithLock(key string) (val interface{}, result int) {
+	if dict == nil {
+		panic(any("dict is nil"))
+	}
+	hashCode := fnv32(key)
+	index := dict.spread(hashCode)
+	s := dict.getShard(index)
+
+	if val, ok := s.m[key]; ok {
+		delete(s.m, key)
+		dict.decreaseCount()
+		return val, 1
+	}
+	return val, 0
 }
 
 func (dict *ConcurrentDict) ForEach(consumer Consumer) {
@@ -324,4 +401,68 @@ func (dict *ConcurrentDict) addCount() int32 {
 
 func (dict *ConcurrentDict) decreaseCount() int32 {
 	return atomic.AddInt32(&dict.count, -1)
+}
+
+// RWLocks locks write keys and read keys together. allow duplicate keys
+func (dict *ConcurrentDict) RWLocks(writeKeys []string, readKeys []string) {
+	keys := append(writeKeys, readKeys...)
+	indices := dict.toLockIndices(keys, false)
+	writeIndexSet := make(map[uint32]struct{})
+	for _, wKey := range writeKeys {
+		idx := dict.spread(fnv32(wKey))
+		writeIndexSet[idx] = struct{}{}
+	}
+	for _, index := range indices {
+		_, w := writeIndexSet[index]
+		mu := &dict.table[index].mutex
+		if w {
+			mu.Lock()
+		} else {
+			mu.RLock()
+		}
+	}
+}
+
+func (dict *ConcurrentDict) RWUnLocks(writeKeys []string, readKeys []string) {
+	keys := append(writeKeys, readKeys...)
+	indices := dict.toLockIndices(keys, false)
+	writeIndexSet := make(map[uint32]struct{})
+	for _, wKey := range writeKeys {
+		idx := dict.spread(fnv32(wKey))
+		writeIndexSet[idx] = struct{}{}
+	}
+	for _, index := range indices {
+		_, w := writeIndexSet[index]
+		mu := &dict.table[index].mutex
+		if w {
+			mu.Unlock()
+		} else {
+			mu.RUnlock()
+		}
+	}
+}
+
+// 对于ConcurrentDict也要解决锁定一组键的问题
+func (dict *ConcurrentDict) toLockIndices(keys []string, reverse bool) []uint32 {
+	// 求所有keys的哈希值及其对应的段表，并排序
+	// 作者在博客中此处的map值为bool型，但github源码中为struct{}
+	// indexMap := make(map[uint32]bool)
+	indexMap := make(map[uint32]struct{})
+	for _, key := range keys {
+		index := dict.spread(fnv32(key))
+		// 得出需要加锁的分段，并加入map中
+		indexMap[index] = struct{}{}
+	}
+	indices := make([]uint32, 0, len(indexMap))
+	for index := range indexMap {
+		indices = append(indices, index)
+	}
+	// 给切片排序，如果比较函数返回true则i元素应该排在j元素之前
+	sort.Slice(indices, func(i, j int) bool {
+		if !reverse {
+			return indices[i] < indices[j]
+		}
+		return indices[i] > indices[j]
+	})
+	return indices
 }

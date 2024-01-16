@@ -165,3 +165,25 @@ var theQueuedReply = new(QueuedReply)
 func MakeQueuedReply() *QueuedReply {
 	return theQueuedReply
 }
+
+/* ---- Multi Empty Multi Bulk Reply ---- */
+
+var emptyMultiBulkBytes = []byte("*0\r\n")
+
+// EmptyMultiBulkReply is an empty list
+type EmptyMultiBulkReply struct{}
+
+// ToBytes marshal redis.Reply
+func (r *EmptyMultiBulkReply) ToBytes() []byte {
+	return emptyMultiBulkBytes
+}
+
+// MakeEmptyMultiBulkReply creates EmptyMultiBulkReply
+func MakeEmptyMultiBulkReply() *EmptyMultiBulkReply {
+	return &EmptyMultiBulkReply{}
+}
+
+// IsErrorReply returns true if the given protocol is error
+func IsErrorReply(reply redis.Reply) bool {
+	return reply.ToBytes()[0] == '-'
+}

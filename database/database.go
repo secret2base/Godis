@@ -4,8 +4,10 @@ import (
 	"Godis/datastruct/dict"
 	"Godis/interface/database"
 	"Godis/interface/redis"
+	"Godis/lib/timewheel"
 	"Godis/redis/protocol"
 	"strings"
+	"time"
 )
 
 const (
@@ -122,9 +124,9 @@ func (db DB) GetEntity(key string) (*database.DataEntity, bool) {
 		return nil, false
 	}
 	// 检查是否过期
-	//if db.IsExpired(key) {
-	//	return nil, false
-	//}
+	if db.IsExpired(key) {
+		return nil, false
+	}
 	// 类型断言
 	entity, _ := raw.(*database.DataEntity)
 	return entity, true
@@ -186,13 +188,21 @@ func (db *DB) Removes(keys ...string) (deleted int) {
 	return deleted
 }
 
-//func (db *DB) GetVersion(key string) uint32 {
-//
-//}
-//
-//func (db *DB) addVersion(write ...string) {
-//
-//}
+// GetVersion returns version code for given key
+func (db *DB) GetVersion(key string) uint32 {
+	entity, ok := db.versionMap.Get(key)
+	if !ok {
+		return 0
+	}
+	return entity.(uint32)
+}
+
+func (db *DB) addVersion(keys ...string) {
+	for _, key := range keys {
+		versionCode := db.GetVersion(key)
+		db.versionMap.Put(key, versionCode+1)
+	}
+}
 
 /* ---- RWLocks Functions ---- */
 
@@ -207,43 +217,75 @@ func (db *DB) RWUnLocks(writeKeys []string, readKeys []string) {
 /* ---- Expired Functions ---- */
 
 // IsExpired check whether a key is expired
-//func (db *DB) IsExpired(key string) bool {
-//	rawExpireTime, ok := db.ttlMap.Get(key)
-//	if !ok {
-//		return false
-//	}
-//	expireTime, _ := rawExpireTime.(time.Time)
-//	expired := time.Now().After(expireTime)
-//	if expired {
-//		db.Remove(key)
-//	}
-//	return expired
-//}
+func (db *DB) IsExpired(key string) bool {
+	rawExpireTime, ok := db.ttlMap.Get(key)
+	if !ok {
+		return false
+	}
+	expireTime, _ := rawExpireTime.(time.Time)
+	expired := time.Now().After(expireTime)
+	if expired {
+		db.Remove(key)
+	}
+	return expired
+}
 
 // Expire sets ttlCmd of key
-//func (db *DB) Expire(key string, expireTime time.Time) {
-//	db.ttlMap.Put(key, expireTime)
-//	taskKey := genExpireTask(key)
-//	timewheel.At(expireTime, taskKey, func() {
-//		keys := []string{key}
-//		db.RWLocks(keys, nil)
-//		defer db.RWUnLocks(keys, nil)
-//		// check-lock-check, ttl may be updated during waiting lock
-//		logger.Info("expire " + key)
-//		rawExpireTime, ok := db.ttlMap.Get(key)
-//		if !ok {
-//			return
-//		}
-//		expireTime, _ := rawExpireTime.(time.Time)
-//		expired := time.Now().After(expireTime)
-//		if expired {
-//			db.Remove(key)
-//		}
-//	})
-//}
+func (db *DB) Expire(key string, expireTime time.Time) {
+	db.ttlMap.Put(key, expireTime)
+	taskKey := genExpireTask(key)
+	timewheel.At(expireTime, taskKey, func() {
+		keys := []string{key}
+		db.RWLocks(keys, nil)
+		defer db.RWUnLocks(keys, nil)
+		// check-lock-check, ttl may be updated during waiting lock
+		// logger.Info("expire " + key)
+		rawExpireTime, ok := db.ttlMap.Get(key)
+		if !ok {
+			return
+		}
+		expireTime, _ := rawExpireTime.(time.Time)
+		expired := time.Now().After(expireTime)
+		if expired {
+			db.Remove(key)
+		}
+	})
+}
 
 /* ---- TTL Functions ---- */
 
 func genExpireTask(key string) string {
 	return "expire:" + key
+}
+
+/* ---- Undo Functions ---- */
+
+// GetUndoLogs return rollback commands
+func (db *DB) GetUndoLogs(cmdLine [][]byte) []CmdLine {
+	cmdName := strings.ToLower(string(cmdLine[0]))
+	cmd, ok := cmdTable[cmdName]
+	if !ok {
+		return nil
+	}
+	undo := cmd.undo
+	if undo == nil {
+		return nil
+	}
+	return undo(db, cmdLine[1:])
+}
+
+/* ---- Exec Functions ---- */
+
+// execWithLock executes normal commands, invoker should provide locks
+func (db *DB) execWithLock(cmdLine [][]byte) redis.Reply {
+	cmdName := strings.ToLower(string(cmdLine[0]))
+	cmd, ok := cmdTable[cmdName]
+	if !ok {
+		return protocol.MakeErrReply("ERR unknown command '" + cmdName + "'")
+	}
+	if !validateArity(cmd.arity, cmdLine) {
+		return protocol.MakeArgNumErrReply(cmdName)
+	}
+	fun := cmd.executor
+	return fun(db, cmdLine[1:])
 }

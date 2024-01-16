@@ -77,7 +77,7 @@ func DiscardMulti(conn redis.Connection) redis.Reply {
 }
 
 // ExecMulti executes multi commands transaction Atomically and Isolated
-func (db *DB) ExecMulti(conn redis.Connection, watching map[string]uint32, cmdLines []CmdLine) redis.Reply {
+func (db *DB) ExecMulti(conn redis.Connection, watching map[string]uint32, cmdLines [][][]byte) redis.Reply {
 	// prepare
 	writeKeys := make([]string, 0) // may contains duplicate
 	readKeys := make([]string, 0)
@@ -132,4 +132,15 @@ func (db *DB) ExecMulti(conn redis.Connection, watching map[string]uint32, cmdLi
 		}
 	}
 	return protocol.MakeErrReply("EXECABORT Transaction discarded because of previous errors.")
+}
+
+// invoker should lock watching keys
+func isWatchingChanged(db *DB, watching map[string]uint32) bool {
+	for key, ver := range watching {
+		currentVersion := db.GetVersion(key)
+		if ver != currentVersion {
+			return true
+		}
+	}
+	return false
 }

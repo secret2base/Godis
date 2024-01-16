@@ -9,6 +9,15 @@ import (
 
 // 对connection接口的实现，每一个connection代表数据库一个客户端之间的连接
 
+const (
+	// flagSlave means this a connection with slave
+	flagSlave = uint64(1 << iota)
+	// flagSlave means this a connection with master
+	flagMaster
+	// flagMulti means this connection is within a transaction
+	flagMulti
+)
+
 type Connection struct {
 	conn net.Conn
 
@@ -70,6 +79,7 @@ func (c *Connection) Write(bytes []byte) (int, error) {
 	return c.conn.Write(bytes)
 }
 
+// Close disconnect with the client
 func (c *Connection) Close() error {
 	c.sendingData.WaitWithTimeout(10 * time.Second)
 	_ = c.conn.Close()
@@ -84,112 +94,139 @@ func (c *Connection) Close() error {
 	return nil
 }
 
+// RemoteAddr returns the remote network address
 func (c *Connection) RemoteAddr() string {
-	//TODO implement me
-	panic("implement me")
+	return c.conn.RemoteAddr().String()
 }
 
-func (c *Connection) SetPassword(s string) {
-	//TODO implement me
-	panic("implement me")
+// SetPassword stores password for authentication
+func (c *Connection) SetPassword(password string) {
+	c.password = password
 }
 
+// GetPassword get password for authentication
 func (c *Connection) GetPassword() string {
-	//TODO implement me
-	panic("implement me")
+	return c.password
 }
 
+// Subscribe add current connection into subscribers of the given channel
 func (c *Connection) Subscribe(channel string) {
-	//TODO implement me
-	panic("implement me")
+	// 使用锁确保对subscriber的并发安全访问
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	// 如果Subscribe为空则新建
+	if c.subs == nil {
+		c.subs = make(map[string]bool)
+	}
+	c.subs[channel] = true
 }
 
+// UnSubscribe removes current connection into subscribers of the given channel
 func (c *Connection) UnSubscribe(channel string) {
-	//TODO implement me
-	panic("implement me")
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// len(nil) == 0
+	if len(c.subs) == 0 {
+		return
+	}
+
+	delete(c.subs, channel)
 }
 
 func (c *Connection) SubsCount() int {
-	//TODO implement me
-	panic("implement me")
+	return len(c.subs)
 }
 
 func (c *Connection) GetChannels() []string {
-	//TODO implement me
-	panic("implement me")
+	if len(c.subs) == 0 {
+		return make([]string, 0)
+	}
+	channels := make([]string, len(c.subs))
+	i := 0
+	for channel := range c.subs {
+		channels[i] = channel
+		i++
+	}
+	return channels
 }
 
+// InMultiState tells is connection in an uncommitted transaction
 func (c *Connection) InMultiState() bool {
-	//TODO implement me
-	panic("implement me")
+	return c.flags&flagMulti > 0
 }
 
-func (c *Connection) SetMultiState(b bool) {
-	//TODO implement me
-	panic("implement me")
+func (c *Connection) SetMultiState(state bool) {
+	if !state { // reset data when cancel multi
+		c.watching = nil
+		c.queue = nil
+		c.flags &= ^flagMulti // clean multi flag
+		return
+	}
+	c.flags |= flagMulti
 }
 
+// GetQueuedCmdLine returns queued commands of current transaction
 func (c *Connection) GetQueuedCmdLine() [][][]byte {
-	//TODO implement me
-	panic("implement me")
+	return c.queue
 }
 
-func (c *Connection) EnqueueCmd(i [][]byte) {
-	//TODO implement me
-	panic("implement me")
+// EnqueueCmd  enqueues command of current transaction
+func (c *Connection) EnqueueCmd(cmdLine [][]byte) {
+	c.queue = append(c.queue, cmdLine)
 }
 
+// ClearQueuedCmds clears queued commands of current transaction
 func (c *Connection) ClearQueuedCmds() {
-	//TODO implement me
-	panic("implement me")
+	c.queue = nil
 }
 
+// GetWatching returns watching keys and their version code when started watching
 func (c *Connection) GetWatching() map[string]uint32 {
-	//TODO implement me
-	panic("implement me")
+	if c.watching == nil {
+		c.watching = make(map[string]uint32)
+	}
+	return c.watching
 }
 
+// AddTxError stores syntax error within transaction
 func (c *Connection) AddTxError(err error) {
-	//TODO implement me
-	panic("implement me")
+	c.txErrors = append(c.txErrors, err)
 }
 
 func (c *Connection) GetTxErrors() []error {
-	//TODO implement me
-	panic("implement me")
+	return c.txErrors
 }
 
+// GetDBIndex returns selected db
 func (c *Connection) GetDBIndex() int {
-	//TODO implement me
-	panic("implement me")
+	return c.selectedDB
 }
 
-func (c *Connection) SelectDB(i int) {
-	//TODO implement me
-	panic("implement me")
+// SelectDB selects a database 用户可以独立选择自己的数据库
+func (c *Connection) SelectDB(index int) {
+	c.selectedDB = index
 }
 
 func (c *Connection) SetSlave() {
-	//TODO implement me
-	panic("implement me")
+	c.flags |= flagSlave
 }
 
 func (c *Connection) IsSlave() bool {
-	//TODO implement me
-	panic("implement me")
+	return c.flags&flagSlave > 0
 }
 
 func (c *Connection) SetMaster() {
-	//TODO implement me
-	panic("implement me")
+	c.flags |= flagMaster
 }
 
 func (c *Connection) IsMaster() bool {
-	//TODO implement me
-	panic("implement me")
+	return c.flags&flagMaster > 0
 }
 
 func (c *Connection) Name() string {
-	//TODO implement me
-	panic("implement me")
+	if c.conn != nil {
+		return c.conn.RemoteAddr().String()
+	}
+	return ""
 }

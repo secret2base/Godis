@@ -1,6 +1,8 @@
 package tcp
 
 import (
+	"Godis/interface/tcp"
+	"context"
 	"log"
 	"net"
 	"os"
@@ -9,17 +11,12 @@ import (
 	"syscall"
 )
 
-type Handler interface {
-	Handle(conn net.Conn)
-	Close() error
-}
-
 /*
 函数名：listenAndServeWithSignal
 功能：监听关闭信号，调用listenAndServe函数实现监听
 输入：端口号，handler
 */
-func ListenAndServeWithSignal(address string, handler Handler) error {
+func ListenAndServeWithSignal(address string, handler tcp.Handler) error {
 	// 创建两个通道，closeChan用于将关闭服务器的通知传递给listenAndServe, sigChan用于监听系统关闭通知
 	// 当程序需要在不同的 goroutine 之间进行通信，但又不需要传递具体的数据时，使用空结构体的通道是一种有效的方式。
 	closeChan := make(chan struct{})
@@ -46,7 +43,7 @@ func ListenAndServeWithSignal(address string, handler Handler) error {
 	return nil
 }
 
-func ListenAndServe(listener net.Listener, handler Handler, closeChan <-chan struct{}) {
+func ListenAndServe(listener net.Listener, handler tcp.Handler, closeChan <-chan struct{}) {
 	// 监听关闭通知，执行关闭函数
 	go func() {
 		<-closeChan
@@ -61,8 +58,7 @@ func ListenAndServe(listener net.Listener, handler Handler, closeChan <-chan str
 		_ = listener.Close()
 		_ = handler.Close()
 	}()
-	// 这里作者的博客写了一个空的上下文，没看出来有什么作用，后面有用再补上
-	// ctx := context.Background()
+	ctx := context.Background()
 	// sync.WaitGroup可用于协程计数和等待一组协程完成，Add()方法增加计数，Done()方法减少计数，Wait()方法等待完成
 	// 这里用于统计存活的连接数
 	var waitDone sync.WaitGroup
@@ -80,7 +76,7 @@ func ListenAndServe(listener net.Listener, handler Handler, closeChan <-chan str
 				waitDone.Done()
 			}()
 			//调用handler接口中的Handle方法处理连接
-			handler.Handle(conn)
+			handler.Handle(ctx, conn)
 		}()
 	}
 	// 主程序等待所有协程执行完毕

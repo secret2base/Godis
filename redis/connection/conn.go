@@ -18,6 +18,7 @@ const (
 	flagMulti
 )
 
+// Connection 是对net.Conn的封装，实现数据库需要的其他功能
 type Connection struct {
 	conn net.Conn
 
@@ -43,7 +44,7 @@ type Connection struct {
 	selectedDB int
 }
 
-func MakeConn(conn net.Conn) *Connection {
+func NewConn(conn net.Conn) *Connection {
 	// 查询缓存池中是否存在，若不存在则新建一个
 	c, ok := connPool.Get().(*Connection)
 	if !ok {

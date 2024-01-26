@@ -45,6 +45,27 @@ func makeDB() *DB {
 	}
 }
 
+// Exec handles the execution of Redis commands. It checks if the given command
+// is a transaction control command or any other command that cannot be executed
+// within a transaction. If it's a transaction control command (e.g., MULTI, DISCARD, EXEC),
+// it performs the corresponding action. If the command is not related to transactions,
+// and the connection is not currently in a MULTI state, it calls execNormalCommand
+// to execute the command in a non-transactional context.
+//
+// Example of a normal transaction:
+//
+//	MULTI
+//	SET key1 value1
+//	INCR key2
+//	EXEC
+//
+// Parameters:
+//   - db: The Redis database instance.
+//   - c: The Redis connection on which the command is executed.
+//   - cmdLine: The command line containing the Redis command and its arguments.
+//
+// Returns:
+//   - redis.Reply: The Redis reply generated as a result of the command execution.
 func (db *DB) Exec(c redis.Connection, cmdLine [][]byte) redis.Reply {
 	// transaction control commands and other commands which cannot execute within transaction
 	// 一个正常的事务例子如下
@@ -288,4 +309,11 @@ func (db *DB) execWithLock(cmdLine [][]byte) redis.Reply {
 	}
 	fun := cmd.executor
 	return fun(db, cmdLine[1:])
+}
+
+func (db DB) AfterClientClose(c redis.Connection) {
+
+}
+func (db DB) Close() {
+
 }

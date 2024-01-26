@@ -149,3 +149,51 @@ func (logger *Logger) Output(level logLevel, callerDepth int, msg string) {
 	entry.level = level
 	logger.entryChan <- entry
 }
+
+// Debug logs debug message through DefaultLogger
+func Debug(v ...any) {
+	msg := fmt.Sprintln(v...)
+	DefaultLogger.Output(DEBUG, defaultCallerDepth, msg)
+}
+
+// Debugf logs debug message through DefaultLogger
+func Debugf(format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+	DefaultLogger.Output(DEBUG, defaultCallerDepth, msg)
+}
+
+// Info logs message through DefaultLogger
+func Info(v ...any) {
+	msg := fmt.Sprintln(v...)
+	DefaultLogger.Output(INFO, defaultCallerDepth, msg)
+}
+
+// Infof logs message through DefaultLogger
+func Infof(format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+	DefaultLogger.Output(INFO, defaultCallerDepth, msg)
+}
+
+// Warn logs warning message through DefaultLogger
+func Warn(v ...any) {
+	msg := fmt.Sprintln(v...)
+	DefaultLogger.Output(WARNING, defaultCallerDepth, msg)
+}
+
+// Error logs error message through DefaultLogger
+func Error(v ...any) {
+	msg := fmt.Sprintln(v...)
+	DefaultLogger.Output(ERROR, defaultCallerDepth, msg)
+}
+
+// Errorf logs error message through DefaultLogger
+func Errorf(format string, v ...any) {
+	msg := fmt.Sprintf(format, v...)
+	DefaultLogger.Output(ERROR, defaultCallerDepth, msg)
+}
+
+// Fatal prints error message then stop the program
+func Fatal(v ...any) {
+	msg := fmt.Sprintln(v...)
+	DefaultLogger.Output(FATAL, defaultCallerDepth, msg)
+}

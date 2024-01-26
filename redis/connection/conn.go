@@ -73,9 +73,9 @@ func (c *Connection) Write(bytes []byte) (int, error) {
 		return 0, nil
 	}
 	c.sendingData.Add(1)
-	//defer func() {
-	//	c.sendingData.Done()
-	//}()
+	defer func() {
+		c.sendingData.Done()
+	}()
 	defer c.sendingData.Done()
 	return c.conn.Write(bytes)
 }

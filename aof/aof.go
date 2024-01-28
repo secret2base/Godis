@@ -3,14 +3,17 @@ package aof
 import (
 	"Godis/interface/database"
 	"Godis/lib/logger"
+	"Godis/lib/utils"
 	"Godis/redis/connection"
 	"Godis/redis/parser"
 	"Godis/redis/protocol"
+	"context"
 	"io"
 	"os"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 type CmdLine = [][]byte
@@ -22,6 +25,19 @@ type Listener interface {
 	Callback([]CmdLine)
 }
 
+const (
+	// FsyncAlways do fsync for every command
+	FsyncAlways = "always"
+	// FsyncEverySec do fsync every second
+	FsyncEverySec = "everysec"
+	// FsyncNo lets operating system decides when to do fsync
+	FsyncNo = "no"
+)
+
+const (
+	aofQueueSize = 1 << 20
+)
+
 type payload struct {
 	cmdLine CmdLine
 	dbIndex int
@@ -30,6 +46,8 @@ type payload struct {
 
 // Persister receive msgs from channel and write to AOF file
 type Persister struct {
+	ctx    context.Context
+	cancel context.CancelFunc
 	// ?
 	tmpDBMaker func() database.DBEngine
 	db         database.DBEngine
@@ -43,8 +61,13 @@ type Persister struct {
 	aofFsync string
 	// aof goroutine will send msg to main goroutine through this channel when aof tasks finished and ready to shut down
 	aofFinished chan struct{}
+	// pause aof for start/finish aof rewrite progress
+	pausingAof sync.Mutex
 	// ?
 	currentDB int
+	listeners map[Listener]struct{}
+	// reuse cmdLine buffer
+	buffer []CmdLine
 }
 
 // NewPersister creates a new aof.Persister
@@ -60,17 +83,56 @@ func NewPersister(db database.DBEngine, filename string, load bool, fsync string
 	if load {
 		persister.LoadAof(0)
 	}
-
+	aofFile, err := os.OpenFile(persister.aofFilename, os.O_APPEND|os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return nil, err
+	}
+	persister.aofFile = aofFile
+	persister.aofChan = make(chan *payload, aofQueueSize)
+	persister.aofFinished = make(chan struct{})
+	persister.listeners = make(map[Listener]struct{})
+	// start aof goroutine to write aof file in background and fsync periodically if needed (see fsyncEverySecond)
+	go func() {
+		persister.listenCmd()
+	}()
+	// Create a context for AOF operations with cancellation support.
+	ctx, cancel := context.WithCancel(context.Background())
+	persister.ctx = ctx
+	persister.cancel = cancel
+	// fsync every second if needed
+	if persister.aofFsync == FsyncEverySec {
+		persister.fsyncEverySecond()
+	}
+	return persister, nil
 }
 
 // RemoveListener removers a listener from aof handler, so we can close the listener
 func (persister *Persister) RemoveListener(listener Listener) {
-
+	persister.pausingAof.Lock()
+	defer persister.pausingAof.Unlock()
+	delete(persister.listeners, listener)
 }
 
 // SaveCmdLine send command to aof goroutine through channel
 func (persister *Persister) SaveCmdLine(dbIndex int, cmdLine CmdLine) {
+	// aofChan will be set as nil temporarily during load aof see Persister.LoadAof
+	if persister.aofChan == nil {
+		return
+	}
+	// aofFsync的策略决定了是否每条Cmd都要同步
+	if persister.aofFsync == FsyncAlways {
+		p := &payload{
+			cmdLine: cmdLine,
+			dbIndex: dbIndex,
+		}
+		persister.writeAof(p)
+		return
+	}
 
+	persister.aofChan <- &payload{
+		cmdLine: cmdLine,
+		dbIndex: dbIndex,
+	}
 }
 
 // listenCmd listen aof channel and write into file
@@ -82,15 +144,49 @@ func (persister *Persister) listenCmd() {
 }
 
 func (persister *Persister) writeAof(p *payload) {
-
+	persister.buffer = persister.buffer[:0] // reuse underlying array 重置buffer
+	persister.pausingAof.Lock()             // prevent other goroutines from pausing aof
+	defer persister.pausingAof.Unlock()
+	// ensure aof is in the right database
+	// 如果数据库不一致增加SELECT命令
+	if p.dbIndex != persister.currentDB {
+		// select db
+		selectCmd := utils.ToCmdLine("SELECT", strconv.Itoa(p.dbIndex))
+		persister.buffer = append(persister.buffer, selectCmd)
+		data := protocol.MakeMultiBulkReply(selectCmd).ToBytes()
+		_, err := persister.aofFile.Write(data)
+		if err != nil {
+			logger.Warn(err)
+			return // skip this command
+		}
+		persister.currentDB = p.dbIndex
+	}
+	// save command
+	data := protocol.MakeMultiBulkReply(p.cmdLine).ToBytes()
+	persister.buffer = append(persister.buffer, p.cmdLine)
+	_, err := persister.aofFile.Write(data)
+	if err != nil {
+		logger.Warn(err)
+	}
+	// 通知AOF的监听器
+	for listener := range persister.listeners {
+		listener.Callback(persister.buffer)
+	}
+	if persister.aofFsync == FsyncAlways {
+		// Sync commits the current contents of the file to stable storage.
+		_ = persister.aofFile.Sync()
+	}
 }
 
 // LoadAof read aof file, can only be used before Persister.listenCmd started
 // maxBytes用于限制最大读取量，为0时无限制
 func (persister *Persister) LoadAof(maxBytes int) {
 	// 避免在加载AOF期间继续有消息进入
-	// aofChan := persister.aofChan
+	aofChan := persister.aofChan
 	persister.aofChan = nil
+	defer func(aofChan chan *payload) {
+		persister.aofChan = aofChan
+	}(aofChan)
 
 	file, err := os.Open(persister.aofFilename)
 	if err != nil {
@@ -160,17 +256,39 @@ func (persister *Persister) LoadAof(maxBytes int) {
 
 // Fsync flushes aof file to disk
 func (persister *Persister) Fsync() {
-
+	persister.pausingAof.Lock()
+	if err := persister.aofFile.Sync(); err != nil {
+		logger.Errorf("fsync failed: %v", err)
+	}
+	persister.pausingAof.Unlock()
 }
 
 // Close gracefully stops aof persistence procedure
 func (persister *Persister) Close() {
-
+	if persister.aofFile != nil {
+		close(persister.aofChan)
+		<-persister.aofFinished // wait for aof finished
+		err := persister.aofFile.Close()
+		if err != nil {
+			logger.Warn(err)
+		}
+	}
+	persister.cancel()
 }
 
 // fsyncEverySecond fsync aof file every second
 func (persister *Persister) fsyncEverySecond() {
-
+	ticker := time.NewTicker(time.Second)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				persister.Fsync()
+			case <-persister.ctx.Done():
+				return
+			}
+		}
+	}()
 }
 
 func (persister *Persister) generateAof(ctx *RewriteCtx) error {

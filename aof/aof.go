@@ -1,6 +1,7 @@
 package aof
 
 import (
+	"Godis/config"
 	"Godis/interface/database"
 	"Godis/lib/logger"
 	"Godis/lib/utils"
@@ -292,5 +293,34 @@ func (persister *Persister) fsyncEverySecond() {
 }
 
 func (persister *Persister) generateAof(ctx *RewriteCtx) error {
+	// AOF文件的地址
+	tmpFile := ctx.tmpFile
+	// 生成一个新的Rewrite Handler
+	tmpAof := persister.newRewriteHandler()
+	// 从persister.aofFilename读入AOF文件
+	persister.LoadAof(int(ctx.fileSize))
 
+	// 遍历所有的数据库
+	for i := 0; i < config.Properties.Databases; i++ {
+		data := protocol.MakeMultiBulkReply(utils.ToCmdLine("SELECT", strconv.Itoa(i))).ToBytes()
+		_, err := tmpFile.Write(data)
+		if err != nil {
+			return err
+		}
+		// 遍历数据库中的所有键值对，并写入AOF
+		tmpAof.db.ForEach(i, func(key string, entity *database.DataEntity, expiration *time.Time) bool {
+			cmd := EntityToCmd(key, entity)
+			if cmd != nil {
+				_, _ = tmpFile.Write(cmd.ToBytes())
+			}
+			if expiration != nil {
+				cmd := MakeExpireCmd(key, *expiration)
+				if cmd != nil {
+					_, _ = tmpFile.Write(cmd.ToBytes())
+				}
+			}
+			return true
+		})
+	}
+	return nil
 }

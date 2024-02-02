@@ -8,3 +8,11 @@ type RewriteCtx struct {
 	fileSize int64
 	dbIdx    int // selected db index when startRewrite
 }
+
+// newRewriteHandler 生成一个RewriteCtx实例
+func (persister *Persister) newRewriteHandler() *Persister {
+	h := &Persister{}
+	h.aofFilename = persister.aofFilename
+	h.db = persister.tmpDBMaker()
+	return h
+}

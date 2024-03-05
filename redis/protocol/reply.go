@@ -111,17 +111,6 @@ func (r *IntReply) ToBytes() []byte {
 	return []byte(":" + strconv.FormatInt(r.Code, 10) + CRLF)
 }
 
-/* ---- Ok Reply ---- */
-type OkReply struct{}
-
-func (o OkReply) ToBytes() []byte {
-	return []byte("+Ok\r\n")
-}
-
-func MakeOkReply() *OkReply {
-	return &OkReply{}
-}
-
 /* ---- Multi Raw Reply ---- */
 
 // MultiRawReply store complex list structure, for example GeoPos command
@@ -147,43 +136,26 @@ func (r *MultiRawReply) ToBytes() []byte {
 	return buf.Bytes()
 }
 
-/* ---- Queued Reply ---- */
-// 原作者将其放入godis/redis/protocol/consts.go
-
-type QueuedReply struct{}
-
-var queuedBytes = []byte("+QUEUED\r\n")
-
-// ToBytes marshal redis.Reply
-func (r *QueuedReply) ToBytes() []byte {
-	return queuedBytes
-}
-
-var theQueuedReply = new(QueuedReply)
-
-// MakeQueuedReply returns a QUEUED protocol
-func MakeQueuedReply() *QueuedReply {
-	return theQueuedReply
-}
-
-/* ---- Multi Empty Multi Bulk Reply ---- */
-
-var emptyMultiBulkBytes = []byte("*0\r\n")
-
-// EmptyMultiBulkReply is an empty list
-type EmptyMultiBulkReply struct{}
-
-// ToBytes marshal redis.Reply
-func (r *EmptyMultiBulkReply) ToBytes() []byte {
-	return emptyMultiBulkBytes
-}
-
-// MakeEmptyMultiBulkReply creates EmptyMultiBulkReply
-func MakeEmptyMultiBulkReply() *EmptyMultiBulkReply {
-	return &EmptyMultiBulkReply{}
-}
-
 // IsErrorReply returns true if the given protocol is error
 func IsErrorReply(reply redis.Reply) bool {
 	return reply.ToBytes()[0] == '-'
+}
+
+// IsOKReply returns true if the given protocol is +OK
+func IsOKReply(reply redis.Reply) bool {
+	return string(reply.ToBytes()) == "+OK\r\n"
+}
+
+// StandardErrReply represents server error
+type StandardErrReply struct {
+	Status string
+}
+
+// ToBytes marshal redis.Reply
+func (r *StandardErrReply) ToBytes() []byte {
+	return []byte("-" + r.Status + CRLF)
+}
+
+func (r *StandardErrReply) Error() string {
+	return r.Status
 }

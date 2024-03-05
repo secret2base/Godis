@@ -2,21 +2,32 @@ package tcp
 
 import (
 	"Godis/interface/tcp"
+	"Godis/lib/logger"
 	"context"
+	"fmt"
 	"log"
 	"net"
 	"os"
 	"os/signal"
 	"sync"
 	"syscall"
+	"time"
 )
 
-/*
-函数名：listenAndServeWithSignal
-功能：监听关闭信号，调用listenAndServe函数实现监听
-输入：端口号，handler
-*/
-func ListenAndServeWithSignal(address string, handler tcp.Handler) error {
+// Config stores tcp server properties
+type Config struct {
+	Address    string        `yaml:"address"`
+	MaxConnect uint32        `yaml:"max-connect"`
+	Timeout    time.Duration `yaml:"timeout"`
+}
+
+// ClientCounter Record the number of clients in the current Godis server
+var ClientCounter int32
+
+// ListenAndServeWithSignal
+// 功能：监听关闭信号，调用listenAndServe函数实现监听
+// 输入：端口号，handler,handler是redis/server/server.go中的结构体，其实现了tcp.Handler接口，并用于Redis服务器连接处理
+func ListenAndServeWithSignal(cfg *Config, handler tcp.Handler) error {
 	// 创建两个通道，closeChan用于将关闭服务器的通知传递给listenAndServe, sigChan用于监听系统关闭通知
 	// 当程序需要在不同的 goroutine 之间进行通信，但又不需要传递具体的数据时，使用空结构体的通道是一种有效的方式。
 	closeChan := make(chan struct{})
@@ -33,12 +44,13 @@ func ListenAndServeWithSignal(address string, handler tcp.Handler) error {
 		}
 	}()
 	// 开启listener
-	listener, err := net.Listen("tcp", address)
+	listener, err := net.Listen("tcp", cfg.Address)
 	if err != nil {
 		log.Println("Listen start error")
 		log.Println(err)
 		return err
 	}
+	logger.Info(fmt.Sprintf("bind: %s, start listening...", cfg.Address))
 	ListenAndServe(listener, handler, closeChan)
 	return nil
 }

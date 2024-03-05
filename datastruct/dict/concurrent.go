@@ -43,8 +43,8 @@ func computeCapacity(param int) (size int) {
 	return n + 1
 }
 
-// MakeConcurrentDict 根据输入的分段数构造ConcurrentDict
-func MakeConcurrentDict(shardCount int) *ConcurrentDict {
+// MakeConcurrent 根据输入的分段数构造ConcurrentDict
+func MakeConcurrent(shardCount int) *ConcurrentDict {
 	// 取整计算分段数
 	shardCount = computeCapacity(shardCount)
 	table := make([]*shard, shardCount)
@@ -209,7 +209,7 @@ func (dict *ConcurrentDict) PutIfAbsentWithLock(key string, val interface{}) (re
 	return 1
 }
 
-func (dict *ConcurrentDict) PutIfExists(key string, val interface{}) (result int) {
+func (dict *ConcurrentDict) PutIfExist(key string, val interface{}) (result int) {
 	if dict == nil {
 		panic(any("dict is nil"))
 	}
@@ -392,7 +392,7 @@ func (dict *ConcurrentDict) RandomDistinctKeys(limit int) []string {
 }
 
 func (dict *ConcurrentDict) Clear() {
-	*dict = *MakeConcurrentDict(dict.shardCount)
+	*dict = *MakeConcurrent(dict.shardCount)
 }
 
 func (dict *ConcurrentDict) addCount() int32 {

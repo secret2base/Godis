@@ -2,6 +2,7 @@ package database
 
 import (
 	"Godis/interface/redis"
+	"github.com/hdt3213/rdb/core"
 	"time"
 )
 
@@ -14,7 +15,7 @@ type DB interface {
 	Exec(client redis.Connection, cmdLine [][]byte) redis.Reply
 	AfterClientClose(c redis.Connection)
 	Close()
-	// LoadRDB(dec *core.Decoder) error
+	LoadRDB(dec *core.Decoder) error
 }
 
 // KeyEventCallback will be called back on key event, such as key inserted or deleted

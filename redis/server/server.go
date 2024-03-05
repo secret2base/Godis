@@ -1,7 +1,11 @@
 package server
 
 import (
+	"Godis/cluster"
+	"Godis/config"
+	database2 "Godis/database"
 	"Godis/interface/database"
+	"Godis/lib/logger"
 	"Godis/redis/connection"
 	"Godis/redis/parser"
 	"Godis/redis/protocol"
@@ -20,13 +24,14 @@ type Handler struct {
 	closing    atomic.Bool // Go在1.19版本引入atomic.Bool
 }
 
+// MakeHandler 根据是否开启集群模式决定Handler的初始化
 func MakeHandler() *Handler {
 	var db database.DB
-	//if config.Properties.ClusterEnable {
-	//	db = cluster.MakeCluster()
-	//} else {
-	//	db = database2.NewStandaloneServer()
-	//}
+	if config.Properties.ClusterEnable {
+		db = cluster.MakeCluster()
+	} else {
+		db = database2.NewStandaloneServer()
+	}
 	return &Handler{
 		db: db,
 	}
@@ -41,16 +46,17 @@ func (h *Handler) closeClient(client *connection.Connection) {
 
 // Handle receives and executes redis commands
 func (h *Handler) Handle(ctx context.Context, conn net.Conn) {
+	/* ---- 判断连接状态并封装 ---- */
 	if h.closing.Load() {
 		// closing handler refuse new connection
 		_ = conn.Close()
 		return
 	}
-
+	// 根据传入的conn连接，将其封装为Connection以符合数据库所需要的功能
 	client := connection.NewConn(conn)
 	h.activeConn.Store(client, struct{}{})
 
-	// 解析接收到的信息
+	/* ---- 解析信息并判断是否错误 ---- */
 	ch := parser.ParseStream(conn)
 	for payload := range ch {
 		// 如果发生错误
@@ -61,10 +67,10 @@ func (h *Handler) Handle(ctx context.Context, conn net.Conn) {
 				strings.Contains(payload.Err.Error(), "use of closed network connection") {
 				// connection closed
 				h.closeClient(client)
-				// logger.Info("connection closed: " + client.RemoteAddr())
+				logger.Info("connection closed: " + client.RemoteAddr())
 				return
 			}
-			// protocol err
+			// 发送协议错误回复给客户端
 			errReply := protocol.MakeErrReply(payload.Err.Error())
 			_, err := client.Write(errReply.ToBytes())
 			if err != nil {
@@ -75,14 +81,16 @@ func (h *Handler) Handle(ctx context.Context, conn net.Conn) {
 			continue
 		}
 		if payload.Data == nil {
-			// logger.Error("empty payload")
+			logger.Error("empty payload")
 			continue
 		}
+
 		r, ok := payload.Data.(*protocol.MultiBulkReply)
 		if !ok {
-			// logger.Error("require multi bulk protocol")
+			logger.Error("require multi bulk protocol")
 			continue
 		}
+		/* ---- 执行收到的命令 ---- */
 		result := h.db.Exec(client, r.Args)
 		if result != nil {
 			_, _ = client.Write(result.ToBytes())
@@ -96,7 +104,6 @@ func (h *Handler) Handle(ctx context.Context, conn net.Conn) {
 func (h *Handler) Close() error {
 	// logger.Info("handler shutting down...")
 	h.closing.Store(true)
-	// TODO: concurrent wait
 	h.activeConn.Range(func(key any, val any) bool {
 		client := key.(*connection.Connection)
 		_ = client.Close()

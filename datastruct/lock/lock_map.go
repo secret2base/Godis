@@ -25,7 +25,7 @@ type Locks struct {
 	table []*sync.RWMutex
 }
 
-func MakeLocks(tableSize int) *Locks {
+func Make(tableSize int) *Locks {
 	table := make([]*sync.RWMutex, tableSize)
 	for i := 0; i < tableSize; i++ {
 		table[i] = &sync.RWMutex{}

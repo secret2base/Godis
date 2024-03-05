@@ -1,7 +1,7 @@
 package connection
 
 import (
-	"Godis/wait"
+	"Godis/lib/sync/wait"
 	"net"
 	"sync"
 	"time"

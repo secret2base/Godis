@@ -15,8 +15,6 @@ const (
 	ttlDictSize  = 1 << 10
 )
 
-type CmdLine = [][]byte
-
 type DB struct {
 	index int
 	// key -> DataEntity
@@ -34,15 +32,41 @@ type DB struct {
 	deleteCallback database.KeyEventCallback
 }
 
+// ExecFunc is interface for command executor
+// args don't include cmd line
+type ExecFunc func(db *DB, args [][]byte) redis.Reply
+
+// PreFunc analyses command line when queued command to `multi`
+// returns related write keys and read keys
+type PreFunc func(args [][]byte) ([]string, []string)
+
+// CmdLine is alias for [][]byte, represents a command line
+type CmdLine = [][]byte
+
+// UndoFunc returns undo logs for the given command line
+// execute from head to tail when undo
+type UndoFunc func(db *DB, args [][]byte) []CmdLine
+
 // 创建一个DB，DB的底层是由ConCurrentDict实现的
 
 func makeDB() *DB {
 	return &DB{
-		data:       dict.MakeConcurrentDict(dataDictSize),
-		ttlMap:     dict.MakeConcurrentDict(ttlDictSize),
-		versionMap: dict.MakeConcurrentDict(dataDictSize),
+		data:       dict.MakeConcurrent(dataDictSize),
+		ttlMap:     dict.MakeConcurrent(ttlDictSize),
+		versionMap: dict.MakeConcurrent(dataDictSize),
 		addAof:     func(line CmdLine) {},
 	}
+}
+
+// makeBasicDB create DB instance only with basic abilities.
+func makeBasicDB() *DB {
+	db := &DB{
+		data:       dict.MakeConcurrent(dataDictSize),
+		ttlMap:     dict.MakeConcurrent(ttlDictSize),
+		versionMap: dict.MakeConcurrent(dataDictSize),
+		addAof:     func(line CmdLine) {},
+	}
+	return db
 }
 
 // Exec handles the execution of Redis commands. It checks if the given command
@@ -131,6 +155,20 @@ func (db *DB) execNormalCommand(cmdLine [][]byte) redis.Reply {
 	// db.addVersion(write...)
 	db.RWLocks(write, read)
 	defer db.RWUnLocks(write, read)
+	fun := cmd.executor
+	return fun(db, cmdLine[1:])
+}
+
+// execWithLock executes normal commands, invoker should provide locks
+func (db *DB) execWithLock(cmdLine [][]byte) redis.Reply {
+	cmdName := strings.ToLower(string(cmdLine[0]))
+	cmd, ok := cmdTable[cmdName]
+	if !ok {
+		return protocol.MakeErrReply("ERR unknown command '" + cmdName + "'")
+	}
+	if !validateArity(cmd.arity, cmdLine) {
+		return protocol.MakeArgNumErrReply(cmdName)
+	}
 	fun := cmd.executor
 	return fun(db, cmdLine[1:])
 }
@@ -273,6 +311,13 @@ func (db *DB) Expire(key string, expireTime time.Time) {
 	})
 }
 
+// Persist cancel ttlCmd of key
+func (db *DB) Persist(key string) {
+	db.ttlMap.Remove(key)
+	taskKey := genExpireTask(key)
+	timewheel.Cancel(taskKey)
+}
+
 /* ---- TTL Functions ---- */
 
 func genExpireTask(key string) string {
@@ -297,23 +342,32 @@ func (db *DB) GetUndoLogs(cmdLine [][]byte) []CmdLine {
 
 /* ---- Exec Functions ---- */
 
-// execWithLock executes normal commands, invoker should provide locks
-func (db *DB) execWithLock(cmdLine [][]byte) redis.Reply {
-	cmdName := strings.ToLower(string(cmdLine[0]))
-	cmd, ok := cmdTable[cmdName]
-	if !ok {
-		return protocol.MakeErrReply("ERR unknown command '" + cmdName + "'")
-	}
-	if !validateArity(cmd.arity, cmdLine) {
-		return protocol.MakeArgNumErrReply(cmdName)
-	}
-	fun := cmd.executor
-	return fun(db, cmdLine[1:])
-}
-
 func (db DB) AfterClientClose(c redis.Connection) {
 
 }
 func (db DB) Close() {
 
+}
+
+// ForEach traverses all the keys in the database
+func (db *DB) ForEach(cb func(key string, data *database.DataEntity, expiration *time.Time) bool) {
+	db.data.ForEach(func(key string, raw interface{}) bool {
+		entity, _ := raw.(*database.DataEntity)
+		var expiration *time.Time
+		rawExpireTime, ok := db.ttlMap.Get(key)
+		if ok {
+			expireTime, _ := rawExpireTime.(time.Time)
+			expiration = &expireTime
+		}
+
+		return cb(key, entity, expiration)
+	})
+}
+
+// Flush clean database
+// deprecated
+// for test only
+func (db *DB) Flush() {
+	db.data.Clear()
+	db.ttlMap.Clear()
 }

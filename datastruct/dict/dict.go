@@ -27,5 +27,5 @@ type Dict interface {
 	// RandomDistinctKeys 随机选择一组不重复的键
 	RandomDistinctKeys(limit int) []string
 	// Clear 清空字典
-	Clear() (result int)
+	Clear()
 }

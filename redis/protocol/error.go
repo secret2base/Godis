@@ -43,11 +43,15 @@ func MakeArgNumErrReply(cmd string) *ArgNumErrReply {
 }
 
 // 定义SyntaxErrReply并实现ErrorReply接口
+// SyntaxErrReply represents meeting unexpected arguments
+var theSyntaxErrReply = &SyntaxErrReply{}
 
-type SyntaxErrReply struct{}
+// MakeSyntaxErrReply creates syntax error
+func MakeSyntaxErrReply() *SyntaxErrReply {
+	return theSyntaxErrReply
+}
 
-var syntaxErrBytes = []byte("-Err syntax error\r\n")
-
+// ToBytes marshals redis.Reply
 func (r *SyntaxErrReply) ToBytes() []byte {
 	return syntaxErrBytes
 }
@@ -55,6 +59,10 @@ func (r *SyntaxErrReply) ToBytes() []byte {
 func (r *SyntaxErrReply) Error() string {
 	return "Err syntax error"
 }
+
+type SyntaxErrReply struct{}
+
+var syntaxErrBytes = []byte("-Err syntax error\r\n")
 
 // WrongTypeErrReply represents operation against a key holding the wrong kind of value
 type WrongTypeErrReply struct{}
